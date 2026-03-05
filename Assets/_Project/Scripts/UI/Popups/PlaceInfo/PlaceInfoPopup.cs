@@ -1,4 +1,6 @@
-﻿using System.Collections.Generic;
+﻿using System.Collections;
+using System.Collections.Generic;
+using System.Linq;
 using DG.Tweening;
 using DG.Tweening.Core;
 using DG.Tweening.Plugins.Options;
@@ -6,7 +8,6 @@ using Scripts.Core.Systems.UI;
 using Scripts.Core.Systems.UI.Popups;
 using Scripts.Data.Place;
 using TMPro;
-using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -20,59 +21,124 @@ namespace Scripts.UI.Popups.PlaceInfo
         [SerializeField] private Button _buttonNext;
         [SerializeField] private PlaceImageView _placeImageViewPrefab;
         [SerializeField] private RectTransform _placeImageViewContainer;
-        [SerializeField] private float _slideStep = 250;
-        [SerializeField] private float _duration = 0.3f;
         [SerializeField] private Scrollbar _scrollbar;
         [SerializeField] private int _maxImages = 4;
+        [SerializeField] private ScrollRect _scrollRect;
 
         private readonly List<PlaceImageView> _placeImageViews = new List<PlaceImageView>();
         private TweenerCore<float, float, FloatOptions> _scrollTween;
 
+        private CanvasGroup _nextCg;
+        private CanvasGroup _prevCg;
+        private bool _suppressScrollbarCallback;
+        private Coroutine _refreshCoroutine;
+        private Coroutine _resetCoroutine;
 
         public override string Id => PopupId.PlaceInfo;
-
 
         protected override void OnInitialization()
         {
             _buttonNext.onClick.AddListener(OnNextButtonDown);
             _buttonPrevious.onClick.AddListener(OnPreviousButtonDown);
             _scrollbar.onValueChanged.AddListener(OnScrollbarValueChanged);
+
+            _nextCg = GetOrAddCanvasGroup(_buttonNext);
+            _prevCg = GetOrAddCanvasGroup(_buttonPrevious);
+        }
+
+        private void ResetScrollToStartAfterLayout()
+        {
+            if (_resetCoroutine != null) StopCoroutine(_resetCoroutine);
+            _resetCoroutine = StartCoroutine(CoResetScrollToStartAfterLayout());
+        }
+
+        private IEnumerator CoResetScrollToStartAfterLayout()
+        {
+            yield return null;
+            yield return new WaitForEndOfFrame();
+
+            Canvas.ForceUpdateCanvases();
+
+            _scrollTween?.Kill();
+            _scrollTween = null;
+
+            _suppressScrollbarCallback = true;
+
+            if (_scrollRect != null)
+            {
+                _scrollRect.StopMovement();
+                _scrollRect.horizontalNormalizedPosition = 0f;
+            }
+
+            if (_scrollbar != null)
+                _scrollbar.SetValueWithoutNotify(0f);
+
+            _suppressScrollbarCallback = false;
+            UpdateNavButtons(_scrollbar.value);
+            _resetCoroutine = null;
+        }
+
+        private static CanvasGroup GetOrAddCanvasGroup(Button b)
+        {
+            var cg = b.GetComponent<CanvasGroup>();
+            if (cg == null) cg = b.gameObject.AddComponent<CanvasGroup>();
+            return cg;
         }
 
         private void OnScrollbarValueChanged(float value)
         {
-            if (_placeImageViews.Count <= _maxImages)
+            if (_suppressScrollbarCallback)
                 return;
-            
-            _buttonPrevious.gameObject.SetActive(value > 0);
-            _buttonNext.gameObject.SetActive(value < 1);
+
+            UpdateNavButtons(value);
+        }
+
+        private void UpdateNavButtons(float value)
+        {
+            if (_placeImageViews.Count <= _maxImages)
+            {
+                SetButtonState(_buttonPrevious, _prevCg, false);
+                SetButtonState(_buttonNext, _nextCg, false);
+                return;
+            }
+
+            SetButtonState(_buttonPrevious, _prevCg, value > 0f);
+            SetButtonState(_buttonNext, _nextCg, value < 1f);
+        }
+
+        private static void SetButtonState(Button button, CanvasGroup cg, bool visible)
+        {
+            button.interactable = visible;
+            cg.alpha = visible ? 1f : 0f;
+            cg.blocksRaycasts = visible;
+            cg.interactable = visible;
         }
 
         private void OnNextButtonDown()
         {
             var targetValue = _scrollbar.value + 0.2f;
-            if (targetValue > 0.9)
-                targetValue = 1;
+            if (targetValue > 0.9f) targetValue = 1f;
+
             _scrollTween?.Kill();
             _scrollTween = DOTween.To(
                 () => _scrollbar.value,
                 x => _scrollbar.value = x,
                 targetValue,
-                .1f
+                0.1f
             );
         }
 
         private void OnPreviousButtonDown()
         {
             var targetValue = _scrollbar.value - 0.2f;
-            if (targetValue < 0.1)
-                targetValue = 0;
+            if (targetValue < 0.1f) targetValue = 0f;
+
             _scrollTween?.Kill();
             _scrollTween = DOTween.To(
                 () => _scrollbar.value,
                 x => _scrollbar.value = x,
                 targetValue,
-                .1f
+                0.1f
             );
         }
 
@@ -82,29 +148,74 @@ namespace Scripts.UI.Popups.PlaceInfo
             if (param == null)
                 return;
 
+            ResetUiState();
+
             _nameText.SetText(param.PlaceData.Name);
             _descriptionText.SetText(param.PlaceData.Description);
-            var images = param.PlaceData.Images;
-            foreach (var placeImage in images)
+
+            foreach (var placeImage in param.PlaceData.Images)
             {
                 var view = Instantiate(_placeImageViewPrefab, _placeImageViewContainer);
                 view.SetData(param.PlaceData, placeImage);
                 _placeImageViews.Add(view);
             }
+
+            ResetScrollToStartAfterLayout();
         }
 
-        protected override void OnAfterOpen(IUIOpenParam openParam)
+        private void ResetUiState()
         {
-            OnScrollbarValueChanged(_scrollbar.value);
+            _refreshCoroutine = StopCoroutineSafe(_refreshCoroutine);
+
+            _scrollTween?.Kill();
+            _scrollTween = null;
+
+            foreach (var t in _placeImageViews.Where(t => t != null))
+                Destroy(t.gameObject);
+
+            _placeImageViews.Clear();
+
+            _suppressScrollbarCallback = true;
+            _scrollbar.SetValueWithoutNotify(0f);
+            _suppressScrollbarCallback = false;
+
+            SetButtonState(_buttonPrevious, _prevCg, false);
+            SetButtonState(_buttonNext, _nextCg, false);
         }
+
+        private IEnumerator RefreshAfterLayout()
+        {
+            yield return new WaitForEndOfFrame();
+
+            UpdateNavButtons(_scrollbar.value);
+            _refreshCoroutine = null;
+        }
+
+        private static Coroutine StopCoroutineSafe(Coroutine coroutine) => coroutine;
 
         protected override void OnAfterClose(bool forceClose)
         {
-            _placeImageViews.ForEach(view => Destroy(view.gameObject));
+            _refreshCoroutine = StopCoroutineSafe(_refreshCoroutine);
+
+            _scrollTween?.Kill();
+            _scrollTween = null;
+
+            for (int i = 0; i < _placeImageViews.Count; i++)
+            {
+                if (_placeImageViews[i] != null)
+                    Destroy(_placeImageViews[i].gameObject);
+            }
+
             _placeImageViews.Clear();
+
+            _suppressScrollbarCallback = true;
+            _scrollbar.SetValueWithoutNotify(0f);
+            _suppressScrollbarCallback = false;
+
+            SetButtonState(_buttonPrevious, _prevCg, false);
+            SetButtonState(_buttonNext, _nextCg, false);
         }
     }
-
 
     public class PlaceInfoPopupOpenParam : IUIOpenParam
     {
