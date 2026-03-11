@@ -17,22 +17,30 @@ namespace Scripts.UI.Popups.PlaceInfo
     {
         [SerializeField] private TMP_Text _nameText;
         [SerializeField] private TMP_Text _descriptionText;
+        [SerializeField] private ScrollRect _descriptionScrollRect;
+
         [SerializeField] private Button _buttonPrevious;
         [SerializeField] private Button _buttonNext;
+
         [SerializeField] private PlaceImageView _placeImageViewPrefab;
         [SerializeField] private RectTransform _placeImageViewContainer;
         [SerializeField] private Scrollbar _scrollbar;
+
         [SerializeField] private int _maxImages = 4;
         [SerializeField] private ScrollRect _scrollRect;
 
         private readonly List<PlaceImageView> _placeImageViews = new List<PlaceImageView>();
+
         private TweenerCore<float, float, FloatOptions> _scrollTween;
 
         private CanvasGroup _nextCg;
         private CanvasGroup _prevCg;
+
         private bool _suppressScrollbarCallback;
+
         private Coroutine _refreshCoroutine;
         private Coroutine _resetCoroutine;
+        private Coroutine _descriptionResetCoroutine;
 
         public override string Id => PopupId.PlaceInfo;
 
@@ -74,8 +82,34 @@ namespace Scripts.UI.Popups.PlaceInfo
                 _scrollbar.SetValueWithoutNotify(0f);
 
             _suppressScrollbarCallback = false;
+
             UpdateNavButtons(_scrollbar.value);
+
             _resetCoroutine = null;
+        }
+
+        private void ResetDescriptionScroll()
+        {
+            if (_descriptionResetCoroutine != null)
+                StopCoroutine(_descriptionResetCoroutine);
+
+            _descriptionResetCoroutine = StartCoroutine(CoResetDescriptionScroll());
+        }
+
+        private IEnumerator CoResetDescriptionScroll()
+        {
+            yield return null;
+            yield return new WaitForEndOfFrame();
+
+            Canvas.ForceUpdateCanvases();
+
+            if (_descriptionScrollRect != null)
+            {
+                _descriptionScrollRect.StopMovement();
+                _descriptionScrollRect.verticalNormalizedPosition = 1f;
+            }
+
+            _descriptionResetCoroutine = null;
         }
 
         private static CanvasGroup GetOrAddCanvasGroup(Button b)
@@ -117,9 +151,12 @@ namespace Scripts.UI.Popups.PlaceInfo
         private void OnNextButtonDown()
         {
             var targetValue = _scrollbar.value + 0.2f;
-            if (targetValue > 0.9f) targetValue = 1f;
+
+            if (targetValue > 0.9f)
+                targetValue = 1f;
 
             _scrollTween?.Kill();
+
             _scrollTween = DOTween.To(
                 () => _scrollbar.value,
                 x => _scrollbar.value = x,
@@ -131,9 +168,12 @@ namespace Scripts.UI.Popups.PlaceInfo
         private void OnPreviousButtonDown()
         {
             var targetValue = _scrollbar.value - 0.2f;
-            if (targetValue < 0.1f) targetValue = 0f;
+
+            if (targetValue < 0.1f)
+                targetValue = 0f;
 
             _scrollTween?.Kill();
+
             _scrollTween = DOTween.To(
                 () => _scrollbar.value,
                 x => _scrollbar.value = x,
@@ -145,6 +185,7 @@ namespace Scripts.UI.Popups.PlaceInfo
         protected override void OnBeforeOpen(IUIOpenParam openParam)
         {
             var param = openParam as PlaceInfoPopupOpenParam;
+
             if (param == null)
                 return;
 
@@ -152,6 +193,8 @@ namespace Scripts.UI.Popups.PlaceInfo
 
             _nameText.SetText(param.PlaceData.Name);
             _descriptionText.SetText(param.PlaceData.Description);
+
+            ResetDescriptionScroll();
 
             foreach (var placeImage in param.PlaceData.Images)
             {
@@ -188,6 +231,7 @@ namespace Scripts.UI.Popups.PlaceInfo
             yield return new WaitForEndOfFrame();
 
             UpdateNavButtons(_scrollbar.value);
+
             _refreshCoroutine = null;
         }
 

@@ -1399,6 +1399,7 @@ MonoBehaviour:
   _content: {fileID: 179196174129813753}
   _nameText: {fileID: 7327978965531129604}
   _descriptionText: {fileID: 4088164815179917357}
+  _descriptionScrollRect: {fileID: 9097870992794571283}
   _buttonPrevious: {fileID: 5006300607293289762}
   _buttonNext: {fileID: 6396003966011483157}
   _placeImageViewPrefab: {fileID: 8134877709772183, guid: cf9e3efb199b02345b18c5354084d1ff, type: 3}
